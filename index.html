@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GOAT Sports – Slots</title>
+<style>
+:root{--bg:#f6f4f0;--card:#fff;--text:#1d1d1f;--muted:#6b6b72;--line:#e3e0da;--accent:#e8590c;--accent-t:#fff;--ok:#2b8a3e;--warn:#b7791f;--need:#8a8a92}
+@media (prefers-color-scheme:dark){:root{--bg:#141416;--card:#1e1e22;--text:#f2f2f3;--muted:#9a9aa3;--line:#2e2e34;--accent:#ff7a30;--accent-t:#141416;--ok:#51cf66;--warn:#ffd43b;--need:#8a8a92}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:480px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--muted);font-size:14px;margin:0 0 14px}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--card);color:var(--text);font-size:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.time{font-weight:650;font-size:17px}
+.badge{font-size:12px;font-weight:600;padding:3px 9px;border-radius:99px;border:1px solid currentColor}
+.on{color:var(--ok)}.half{color:var(--warn)}.need{color:var(--need)}
+.counts{color:var(--muted);font-size:14px;margin:6px 0 10px}
+.btns{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+button{padding:11px 4px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:14px;font-weight:600;cursor:pointer}
+button.sel{background:var(--accent);color:var(--accent-t);border-color:var(--accent)}
+button.out{grid-column:1/-1;font-weight:500;color:var(--muted)}
+.who{font-size:13px;color:var(--muted);margin-top:10px}
+.msg{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-size:14px}
+.err{color:#e03131}
+.empty{color:var(--muted);text-align:center;margin-top:28px}
+</style>
+</head>
+<body>
+<main>
+  <h1>🏀 GOAT Sports – Today’s slots</h1>
+  <p class="sub">Pick your slot and how you want to play.</p>
+
+  <label for="phone">Your mobile number</label>
+  <input id="phone" type="tel" inputmode="numeric" placeholder="10-digit number">
+
+  <label for="day">Date</label>
+  <input id="day" type="date">
+
+  <div id="msg"></div>
+  <div id="slots"></div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const LABEL = {full:"Full court", half:"Half court", solo:"Shoot around"};
+const STATUS = {"full court on":["on","Full court on"],"half court on":["half","Half court on"],"needs more players":["need","Needs players"]};
+let choices = {};
+
+function store(k, v){ try{ v===undefined ? localStorage.getItem(k) : localStorage.setItem(k, v); }catch(e){} }
+function fetchStore(k){ try{ return localStorage.getItem(k) || ""; }catch(e){ return ""; } }
+
+function fmt(t){ const [h,m]=t.split(":").map(Number); return ((h%12)||12)+":"+String(m).padStart(2,"0")+" "+(h<12?"AM":"PM"); }
+function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+function say(text, isErr){ $("#msg").innerHTML = text ? `<div class="msg ${isErr?"err":""}">${esc(text)}</div>` : ""; }
+const phoneVal = () => $("#phone").value.replace(/\D/g,"").slice(-10);
+
+function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+
+async function load(){
+  const day = $("#day").value;
+  try{
+    const r = await fetch("/slots?day="+day);
+    const slots = await r.json();
+    const p = phoneVal();
+    $("#slots").innerHTML = slots.length ? slots.map(s=>{
+      const [cls,txt] = STATUS[s.status];
+      const mine = choices[p+":"+s.slot_id];
+      const names = [].concat(s.players.full,s.players.half,s.players.solo);
+      return `<div class="card">
+        <div class="row"><span class="time">${fmt(s.start)} – ${fmt(s.end)}</span><span class="badge ${cls}">${txt}</span></div>
+        <div class="counts">Full ${s.counts.full} · Half ${s.counts.half} · Solo ${s.counts.solo}</div>
+        <div class="btns">
+          ${["full","half","solo"].map(m=>`<button class="${mine===m?"sel":""}" data-id="${s.slot_id}" data-mode="${m}">${LABEL[m]}</button>`).join("")}
+          ${mine?`<button class="out" data-id="${s.slot_id}" data-mode="none">Not coming</button>`:""}
+        </div>
+        ${names.length?`<div class="who">Playing: ${names.map(esc).join(", ")}</div>`:""}
+      </div>`;
+    }).join("") : `<p class="empty">No open slots posted for this day yet.</p>`;
+  }catch(e){ say("Couldn’t load slots. Check your connection.", true); }
+}
+
+async function choose(id, mode){
+  const p = phoneVal();
+  if(p.length!==10){ say("Enter your 10-digit mobile number first.", true); $("#phone").focus(); return; }
+  try{
+    const r = mode==="none"
+      ? await fetch(`/slots/${id}/optin?phone=${p}`,{method:"DELETE"})
+      : await fetch(`/slots/${id}/optin`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({phone:p,mode})});
+    const data = await r.json();
+    if(!r.ok){ say(data.detail || "Something went wrong.", true); return; }
+    if(mode==="none"){ delete choices[p+":"+id]; say("You’re out of this slot."); }
+    else { choices[p+":"+id]=mode; say("You’re in for "+LABEL[mode].toLowerCase()+". See you on court!"); }
+    try{ localStorage.setItem("choices", JSON.stringify(choices)); }catch(e){}
+    load();
+  }catch(e){ say("Couldn’t save. Please try again.", true); }
+}
+
+$("#slots").addEventListener("click", e=>{
+  const b = e.target.closest("button[data-id]");
+  if(b) choose(b.dataset.id, b.dataset.mode);
+});
+$("#phone").addEventListener("input", ()=>{ try{ localStorage.setItem("phone", $("#phone").value); }catch(e){} load(); });
+$("#day").addEventListener("change", load);
+
+try{ choices = JSON.parse(fetchStore("choices")||"{}"); }catch(e){ choices = {}; }
+$("#phone").value = fetchStore("phone");
+$("#day").value = today(); $("#day").min = today();
+load();
+</script>
+</body>
+</html>

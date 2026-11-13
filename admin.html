@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GOAT Sports – Admin</title>
+<style>
+:root{--bg:#f6f4f0;--card:#fff;--text:#1d1d1f;--muted:#6b6b72;--line:#e3e0da;--accent:#e8590c;--accent-t:#fff;--ok:#2b8a3e;--bad:#e03131}
+@media (prefers-color-scheme:dark){:root{--bg:#141416;--card:#1e1e22;--text:#f2f2f3;--muted:#9a9aa3;--line:#2e2e34;--accent:#ff7a30;--accent-t:#141416;--ok:#51cf66;--bad:#ff6b6b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:520px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:4px 0 12px}
+h2{font-size:16px;margin:0 0 8px}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font-size:16px;font-family:inherit}
+textarea{min-height:140px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-top:12px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:15px;font-weight:600;cursor:pointer;margin-top:12px}
+button.pri{background:var(--accent);color:var(--accent-t);border-color:var(--accent);width:100%}
+button.sm{margin:0;padding:6px 10px;font-size:13px;color:var(--bad)}
+.item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 0;border-top:1px solid var(--line);font-size:15px}
+.item:first-of-type{border-top:0}
+.meta{color:var(--muted);font-size:13px}
+.ok{color:var(--ok)}.bad{color:var(--bad)}
+.msg{position:sticky;top:8px;z-index:5;margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--card);border:1px solid var(--line);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+  <h1>🏀 GOAT Sports – Admin</h1>
+  <div id="msg"></div>
+
+  <div class="card">
+    <h2>Admin key</h2>
+    <input id="key" type="password" placeholder="Enter admin key" autocomplete="off">
+    <div class="meta" style="margin-top:6px">Saved on this phone only.</div>
+  </div>
+
+  <div class="card">
+    <h2>Add slots</h2>
+    <label for="day">Date</label>
+    <input id="day" type="date">
+    <label for="starts">Start times (24-hour, comma separated)</label>
+    <input id="starts" value="06:00, 07:00, 17:00, 18:00, 19:00">
+    <label for="dur">Length</label>
+    <select id="dur"><option value="1">1 hour</option><option value="1.5">1.5 hours</option><option value="2">2 hours</option></select>
+    <button class="pri" id="addSlots">Publish slots</button>
+  </div>
+
+  <div class="card">
+    <h2>Slots on this date</h2>
+    <div id="slotList"></div>
+    <button id="wa">Get WhatsApp message</button>
+    <textarea id="waText" style="display:none;margin-top:10px" readonly></textarea>
+    <button id="copy" style="display:none">Copy</button>
+  </div>
+
+  <div class="card">
+    <h2>Add or renew subscriber</h2>
+    <label for="sname">Name</label>
+    <input id="sname" placeholder="Player name">
+    <div class="two">
+      <div><label for="sphone">Mobile</label><input id="sphone" type="tel" inputmode="numeric" placeholder="10 digits"></div>
+      <div><label for="sstart">Paid on</label><input id="sstart" type="date"></div>
+    </div>
+    <div class="meta" style="margin-top:6px">Valid for 30 days from this date.</div>
+    <button class="pri" id="addSub">Save subscriber</button>
+  </div>
+
+  <div class="card">
+    <h2>Subscribers</h2>
+    <div id="subList"></div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => { const d=document.createElement("div"); d.textContent=s; return d.innerHTML; };
+function get(k){ try{ return localStorage.getItem(k)||""; }catch(e){ return ""; } }
+function put(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+function say(t, bad){ $("#msg").innerHTML = t ? `<div class="msg ${bad?"bad":""}">${esc(t)}</div>` : ""; if(t) setTimeout(()=>{ $("#msg").innerHTML=""; }, 4000); }
+function today(){ const d=new Date(); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,10); }
+function fmt(t){ const [h,m]=t.split(":").map(Number); return ((h%12)||12)+":"+String(m).padStart(2,"0")+" "+(h<12?"AM":"PM"); }
+
+async function api(path, opts={}){
+  const r = await fetch(path, {...opts, headers:{"Content-Type":"application/json","X-Admin-Key":$("#key").value, ...(opts.headers||{})}});
+  const data = await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(typeof data.detail==="string" ? data.detail : "Request failed");
+  return data;
+}
+
+function endTime(start, hrs){
+  let [h,m] = start.split(":").map(Number);
+  let total = h*60+m+Math.round(hrs*60); total%=1440;
+  return String(Math.floor(total/60)).padStart(2,"0")+":"+String(total%60).padStart(2,"0");
+}
+
+async function loadSlots(){
+  $("#waText").style.display=$("#copy").style.display="none";
+  try{
+    const slots = await (await fetch("/slots?day="+$("#day").value)).json();
+    $("#slotList").innerHTML = slots.length ? slots.map(s=>{
+      const n=s.counts;
+      return `<div class="item"><div>${fmt(s.start)} – ${fmt(s.end)}<div class="meta">Full ${n.full} · Half ${n.half} · Solo ${n.solo} · ${esc(s.status)}</div></div><button class="sm" data-del="${s.slot_id}">Delete</button></div>`;
+    }).join("") : `<div class="meta">No slots yet for this date.</div>`;
+  }catch(e){ say("Couldn’t load slots.", true); }
+}
+
+async function loadSubs(){
+  if(!$("#key").value){ $("#subList").innerHTML=`<div class="meta">Enter the admin key to see subscribers.</div>`; return; }
+  try{
+    const subs = await api("/subscribers");
+    $("#subList").innerHTML = subs.length ? subs.map(s=>
+      `<div class="item"><div>${esc(s.name)}<div class="meta">${esc(s.phone)}</div></div><div class="meta ${s.active?"ok":"bad"}">${s.active?"Active till":"Expired"} ${esc(s.end_date)}</div></div>`
+    ).join("") : `<div class="meta">No subscribers yet.</div>`;
+  }catch(e){ $("#subList").innerHTML=`<div class="meta bad">${esc(e.message)}</div>`; }
+}
+
+$("#addSlots").onclick = async ()=>{
+  const day=$("#day").value, hrs=parseFloat($("#dur").value);
+  const starts=$("#starts").value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(!day||!starts.length){ say("Pick a date and at least one start time.", true); return; }
+  if(starts.some(s=>!/^\d{1,2}:\d{2}$/.test(s))){ say("Use times like 06:00, 18:30.", true); return; }
+  const slots = starts.map(s=>{ const p=s.padStart(5,"0"); return {day, start:p, end:endTime(p,hrs)}; });
+  try{ await api("/slots",{method:"POST",body:JSON.stringify(slots)}); say("Slots published."); loadSlots(); }
+  catch(e){ say(e.message, true); }
+};
+
+$("#slotList").addEventListener("click", async e=>{
+  const id=e.target.dataset.del; if(!id) return;
+  if(!confirm("Delete this slot and its sign-ups?")) return;
+  try{ await api("/slots/"+id,{method:"DELETE"}); say("Slot deleted."); loadSlots(); }
+  catch(err){ say(err.message, true); }
+});
+
+$("#wa").onclick = async ()=>{
+  try{
+    const d = await (await fetch("/whatsapp/"+$("#day").value)).json();
+    $("#waText").value=d.text; $("#waText").style.display=$("#copy").style.display="block";
+  }catch(e){ say("Couldn’t build message.", true); }
+};
+$("#copy").onclick = async ()=>{
+  try{ await navigator.clipboard.writeText($("#waText").value); say("Copied. Paste it in WhatsApp."); }
+  catch(e){ $("#waText").select(); say("Select and copy the text manually."); }
+};
+
+$("#addSub").onclick = async ()=>{
+  const name=$("#sname").value.trim(), phone=$("#sphone").value.replace(/\D/g,"");
+  if(!name||phone.length<10){ say("Enter a name and 10-digit mobile.", true); return; }
+  try{
+    const r = await api("/subscribers",{method:"POST",body:JSON.stringify({name,phone,start_date:$("#sstart").value||null})});
+    say(name+" is valid until "+r.valid_until+"."); $("#sname").value=$("#sphone").value=""; loadSubs();
+  }catch(e){ say(e.message, true); }
+};
+
+$("#key").addEventListener("change", ()=>{ put("adminKey",$("#key").value); loadSubs(); });
+$("#day").addEventListener("change", loadSlots);
+
+$("#key").value = get("adminKey");
+$("#day").value = today(); $("#sstart").value = today();
+loadSlots(); loadSubs();
+</script>
+</body>
+</html>
